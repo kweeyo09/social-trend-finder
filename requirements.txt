@@ -1,22 +1,8 @@
-# HTTP
-requests==2.32.3
-httpx==0.27.0
-scrapling          # web-fetch backend used by base_fetcher.safe_get
+# Dependencies for the SERVER-SIDE feed generator (generate_feed.py), run by
+# the GitHub Action only. The Claude skill side (prepare_digest.py, deliver.py)
+# uses ONLY the Python standard library — nothing to install to run a digest.
 
-# Env / Config
-python-dotenv==1.0.1
-
-# Scheduling
-APScheduler==3.10.4
-
-# Email
-sendgrid==6.11.0
-
-# Claude API
-anthropic==0.28.0
-
-# Retry logic
-tenacity==8.3.0
-
-# Timezone
-pytz==2024.1
+requests==2.32.3        # Instagram token refresh helper
+scrapling               # web-fetch backend for base_fetcher.safe_get
+tenacity==8.3.0         # retry/backoff on rate limits
+python-dotenv==1.0.1    # load .env when testing the fetcher locally

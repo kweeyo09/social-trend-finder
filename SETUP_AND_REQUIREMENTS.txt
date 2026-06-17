@@ -1,186 +1,144 @@
 ==============================================================================
  SOCIAL TREND FINDER — SETUP, REQUIREMENTS & TESTING GUIDE
 ==============================================================================
- What this covers: every dependency, environment variable, and API key the
- skill needs, plus exactly what to do to edit and test it locally.
-
- NOTE: This is a Claude *skill* (SKILL.md is the entry point), but it runs by
- executing the bundled Python scripts. So "make it run" = make the Python run.
-
-
-------------------------------------------------------------------------------
- 0. CURRENT STATUS — READ FIRST
-------------------------------------------------------------------------------
- The two original code-level blockers have now been FIXED:
-
-   (A) base_fetcher.py — NOW CREATED.
-       Provides safe_get(url, params, headers, timeout) -> dict.
-       It fetches via the Scrapling library (scrapling.fetchers.Fetcher)
-       and is wrapped in tenacity for retry/backoff on HTTP 429 and 5xx.
-       All endpoints return JSON, so safe_get returns the parsed JSON body.
-
-   (B) Imports — NOW FLATTENED.
-       Chosen for stability: every file sits in the project root and imports
-       by plain module name (e.g. `import settings`, `from instagram import`,
-       `from base_fetcher import safe_get`). No src/ or config/ folders and no
-       __init__.py needed. Run from the project root and imports always
-       resolve. (NOTE: SKILL.md still *describes* a src/ tree — that diagram is
-       now out of date vs. the actual flat layout.)
-
- What remains before a real run: install dependencies (section 2) and supply
- credentials (sections 3-4). The code compiles and the import graph is
- consistent; it has NOT been run end-to-end here because no deps were installed
- in the editing environment.
+ Architecture: a Claude skill. Claude is the host and writes the summaries
+ itself (no AI API key). Trend data is fetched centrally by a GitHub Action,
+ so the skill needs no keys to fetch. The only per-user credential is a
+ SendGrid key for emailing the digest to the team.
 
 
 ------------------------------------------------------------------------------
- 1. SYSTEM PREREQUISITES
+ 0. THE TWO SIDES
 ------------------------------------------------------------------------------
-   - Python 3.10 or newer  (code uses `str | None` type syntax = 3.10+)
-   - pip
-   - A virtual environment (recommended): python -m venv .venv
+   SERVER SIDE (runs in GitHub Actions, owned by an admin)
+     generate_feed.py + instagram.py + tiktok.py + scorer.py +
+     base_fetcher.py + settings.py
+     -> fetches Instagram + TikTok, scores by engagement velocity, and
+        commits feed-instagram.json / feed-tiktok.json to the repo.
+     -> needs the Meta + TikTok keys, stored as GitHub Secrets.
 
+   SKILL SIDE (runs inside Claude, on each user's machine)
+     prepare_digest.py  -> reads the committed feeds + prompts + config (HTTP)
+     deliver.py         -> emails the finished digest via SendGrid
+     prompts/*.md       -> plain-English summary instructions
+     -> uses ONLY the Python standard library (no pip install)
+     -> needs ONLY a SendGrid key (for the person sending), stored locally.
 
-------------------------------------------------------------------------------
- 2. PYTHON DEPENDENCIES  (from requirements.txt)
-------------------------------------------------------------------------------
-   Install all with:  pip install -r requirements.txt
-
-   PACKAGE            VERSION     PURPOSE
-   ----------------   ---------   --------------------------------------------
-   requests           2.32.3      Used by instagram.py refresh_token()
-   httpx              0.27.0      Async-capable HTTP (parallel fetches)
-   scrapling          (latest)    Web-fetch backend for base_fetcher.safe_get
-   python-dotenv      1.0.1       Loads the .env file into os.environ
-   APScheduler        3.10.4      Runs the report on a Mon/Wed/Fri schedule
-   sendgrid           6.11.0      Sends the digest email
-   anthropic          0.28.0      Calls Claude for the 2-sentence insights
-   tenacity           8.3.0       Retry decorator for flaky API calls
-   pytz               2024.1      Timezone handling for the scheduler
-
-   (SKILL.md also mentions pandas as optional for scoring — NOT required and
-   NOT in requirements.txt. The current scorer.py uses no pandas.)
+   API KEY COUNT:  4 (old design)  ->  1 per user (SendGrid)  +  fetch keys
+                   held once, centrally, by the admin.
 
 
 ------------------------------------------------------------------------------
- 3. ENVIRONMENT VARIABLES  (create a .env file in project root)
+ 1. SKILL SIDE — what a user needs
 ------------------------------------------------------------------------------
- settings.py loads these via python-dotenv and HARD-FAILS at startup if any
- "REQUIRED" var is missing. Copy .env.example -> .env, then fill in.
+   Prerequisites:
+     - Python 3.x (standard library only — nothing to pip install)
+     - The skill installed at ~/.claude/skills/social-trend-finder
+     - A SendGrid API key + a verified sender address
 
- REQUIRED
- --------
-   META_APP_ID             Meta app ID
-   META_APP_SECRET         Meta app secret
-   INSTAGRAM_ACCESS_TOKEN  Long-lived IG token (60-day expiry)
-   INSTAGRAM_USER_ID       Your IG Business/Creator user ID
-   SENDGRID_API_KEY        SendGrid API key
-   EMAIL_FROM              Verified SendGrid sender address
-   EMAIL_TO                Recipient(s), comma-separated
-   ANTHROPIC_API_KEY       Claude API key
+   Local files the skill creates during onboarding:
+     ~/.social-trend-finder/.env          -> SENDGRID_API_KEY=...
+     ~/.social-trend-finder/config.json   -> recipients, fromEmail, frequency,
+                                             language, onboardingComplete
+     (optional) ~/.social-trend-finder/prompts/<file>.md
+                                          -> per-user prompt overrides
 
-   TikTok provider — AT LEAST ONE of these is required
-   (settings.py raises an error if both are empty):
-     ENSEMBLEDATA_API_TOKEN   EnsembleData (covers IG + TikTok)
-     LAMATOK_API_KEY          LamaTok (TikTok-only, cheaper)
-   If ENSEMBLEDATA_API_TOKEN is set it is used; otherwise LamaTok.
+   config.json fields (see config/config.example.json):
+     recipients   list of company email addresses to send to
+     fromEmail    a SendGrid-verified sender address
+     frequency    "weekly" (default) or "daily" — informational
+     language     "en" | "zh" | "bilingual"
 
- OPTIONAL (have defaults)
- ------------------------
-   INSTAGRAM_API_VERSION    default: v21.0
-   HASHTAGS_TO_TRACK        default: skincare,aestheticfashion
-   TIKTOK_REGIONS           default: GB,US
-   TIMEZONE                 default: Europe/London
-   LOG_FILE                 default: data/trends_log.json
-   REPORT_SCHEDULE          documented but NOT actually read by scheduler.py
-                            (the Mon/Wed/Fri 08:00 cron is hardcoded)
+   Run a digest (what Claude does for you):
+     python3 prepare_digest.py            # prints feed+prompts+config as JSON
+     ...Claude writes the HTML digest from that JSON...
+     python3 deliver.py --subject "..." --file /tmp/stf-digest.html
 
 
 ------------------------------------------------------------------------------
- 4. API KEYS — WHERE TO GET THEM & GOTCHAS
+ 2. SERVER SIDE — what the admin needs (one-time)
 ------------------------------------------------------------------------------
-   META (Instagram Graph API)        developers.facebook.com -> create app
-     - Free, but requires OAuth app review.
-     - Works only on Business/Creator accounts you control.
-     - Hashtag search capped at 30 unique hashtags/week per account.
-     - Rate limit ~200 requests/hour.
-     - Long-lived token expires after 60 days. instagram.py has a
-       refresh_token() helper, but nothing calls it automatically yet.
-     - Insights features need 1,000+ followers.
+   Python dependencies (requirements.txt) — installed automatically by the
+   GitHub Action; only needed if you run the fetcher locally:
+     requests==2.32.3      Instagram token refresh
+     scrapling             web-fetch backend for base_fetcher.safe_get
+     tenacity==8.3.0       retry/backoff on rate limits
+     python-dotenv==1.0.1  load .env for local fetch testing
 
-   TIKTOK (third-party — pick one)
-     - EnsembleData   ensembledata.com    (~$100-$1,400/mo; IG + TikTok)
-     - LamaTok        api.lamatok.com      (~$0.0006/req; 100 free to trial)
-     - Official TikTok API does NOT expose trending sounds/hashtags, so a
-       third-party provider is mandatory for TikTok data.
+   GitHub repository SECRETS (Settings -> Secrets and variables -> Actions):
+     INSTAGRAM_ACCESS_TOKEN   long-lived IG token (60-day expiry)
+     INSTAGRAM_USER_ID        IG Business/Creator user ID
+     ENSEMBLEDATA_API_TOKEN   EnsembleData (covers IG + TikTok)   } at least
+        -- or --                                                  } one of
+     LAMATOK_API_KEY          LamaTok (TikTok-only, cheaper)      } these
 
-   SENDGRID                            app.sendgrid.com -> API Keys
-     - EMAIL_FROM must be a verified sender/domain.
+   GitHub repository VARIABLES:
+     HASHTAGS_TO_TRACK        e.g. skincare,aestheticfashion,cleanbeauty
+     TIKTOK_REGIONS           e.g. GB,US
 
-   ANTHROPIC (Claude)                  console.anthropic.com
-     - summariser.py calls model "claude-sonnet-4-6".
+   First run:
+     Actions tab -> "Generate Trend Feeds" -> Run workflow.
+     This creates feed-instagram.json / feed-tiktok.json. After that the
+     workflow runs on the schedule in .github/workflows/generate-feed.yml
+     (default: weekly, Monday 06:00 UTC).
 
-
-------------------------------------------------------------------------------
- 5. HOW TO EDIT & TEST LOCALLY
-------------------------------------------------------------------------------
- STEP 1 — Environment
-   python -m venv .venv
-   source .venv/bin/activate            (Windows: .venv\Scripts\activate)
-   pip install -r requirements.txt
-
- STEP 2 — (Already done — see section 0. base_fetcher.py exists and imports
-          are flattened. Nothing to do here unless you change the layout.)
-   NOTE: Scrapling's plain Fetcher is pure HTTP and needs no browser install.
-   Only StealthyFetcher/DynamicFetcher would need `scrapling install`; this
-   project does not use those.
-
- STEP 3 — Credentials
-   cp .env.example .env
-   # edit .env, fill in section 3 values
-   # for cheapest testing: use LAMATOK_API_KEY (100 free requests)
-
- STEP 4 — One-off test run
-   python main.py --once
-   # runs FETCH -> SCORE -> SUMMARISE -> EMAIL -> LOG once and exits.
-
- STEP 5 — Test the scheduler (optional)
-   python scheduler.py
-   # blocks and runs the job Mon/Wed/Fri 08:00 in TIMEZONE. Ctrl+C to stop.
-
- STEP 6 — Check output
-   - Email arrives at EMAIL_TO addresses.
-   - Run metadata appended to data/trends_log.json (created automatically).
-
- TESTING TIPS (to avoid burning API quota / sending real emails while editing)
-   - Test scoring in isolation — scorer.py is pure functions, no network:
-       from scorer import score_instagram_post, rank_tiktok_sounds
-     Feed it fake dicts and check the numbers.
-   - Test the email HTML without sending — call render_digest() in renderer.py
-     with sample data and write the returned string to a .html file to preview.
-   - Comment out / stub send_digest() in sender.py so no real email goes out.
-   - Stub the fetchers to return canned JSON so you don't hit Meta/TikTok at
-     all while iterating on scoring or rendering.
-   - Watch the console: logging is INFO level, so each FETCH/SCORE/EMAIL step
-     prints progress and errors.
+   If you fork to a different repo, set STF_FEED_BASE (raw URL base) so the
+   skill's prepare_digest.py reads YOUR feeds. Default points at
+   https://raw.githubusercontent.com/kweeyo09/social-trend-finder/main
 
 
 ------------------------------------------------------------------------------
- 6. FILE MAP (what each script does)
+ 3. WHERE TO GET THE KEYS (admin side) + GOTCHAS
 ------------------------------------------------------------------------------
-   SKILL.md         The skill definition / instructions (entry point).
-   README.md        Human quick-start.
-   main.py          Orchestrates FETCH->SCORE->SUMMARISE->EMAIL->LOG; --once.
-   scheduler.py     APScheduler wrapper (Mon/Wed/Fri 08:00).
-   settings.py      Loads + validates env vars (fails fast if missing).
-   instagram.py     Meta Graph API fetchers + token refresh helper.
-   tiktok.py        EnsembleData / LamaTok fetchers.
-   scorer.py        Engagement-velocity scoring & ranking (pure, no network).
-   summariser.py    Claude API call for 2-sentence insights.
-   renderer.py      Builds the HTML email.
-   sender.py        Sends the email via SendGrid.
-   base_fetcher.py  safe_get() — Scrapling fetch + tenacity retry (CREATED).
-   requirements.txt Python dependencies.
-   .env.example     Template for .env (never commit the real .env).
+   META (Instagram Graph API)   developers.facebook.com -> create app
+     - Business/Creator accounts only; 30 hashtag searches/week per account;
+       long-lived token expires after 60 days.
+   TIKTOK (third-party)
+     - EnsembleData ($) covers IG + TikTok; LamaTok ($, cheaper, 100 free).
+       The official TikTok API does not expose trending data.
+   SENDGRID (skill side)         app.sendgrid.com -> API Keys
+     - fromEmail must be a verified sender/domain.
 
+
+------------------------------------------------------------------------------
+ 4. TESTING
+------------------------------------------------------------------------------
+   Skill side (no keys needed):
+     - python3 prepare_digest.py
+       Before the Action has run, the feeds are placeholders (empty arrays) so
+       you'll see stats of 0 and a note in "errors" — that's expected.
+     - deliver.py dry run: with no .env/config, it PRINTS the digest instead of
+       sending, so you can test formatting safely:
+         echo "<h1>hi</h1>" | python3 deliver.py --subject "test"
+     - Pure-logic modules (server side) can be unit-tested with fake dicts:
+         scorer.rank_tiktok_sounds([...]) / scorer.score_instagram_post({...})
+
+   Server side (needs keys):
+     pip install -r requirements.txt
+     export INSTAGRAM_ACCESS_TOKEN=... INSTAGRAM_USER_ID=... LAMATOK_API_KEY=...
+     export HASHTAGS_TO_TRACK=skincare,cleanbeauty TIKTOK_REGIONS=GB,US
+     python generate_feed.py        # writes the two feed-*.json files
+
+
+------------------------------------------------------------------------------
+ 5. FILE MAP
+------------------------------------------------------------------------------
+   SKILL.md            The skill Claude runs (onboarding + digest workflow).
+   README.md           Human quick-start (user + admin).
+   prepare_digest.py   Skill side: feed + prompts + config -> JSON (stdlib).
+   deliver.py          Skill side: email via SendGrid HTTP API (stdlib).
+   prompts/*.md        Editable summary instructions.
+   generate_feed.py    Server side: fetch + score -> feed JSON.
+   instagram.py        Server side: Meta Graph API fetchers.
+   tiktok.py           Server side: EnsembleData / LamaTok fetchers.
+   scorer.py           Server side: engagement-velocity scoring (pure).
+   base_fetcher.py     Server side: Scrapling fetch + tenacity retry.
+   settings.py         Server side: validates fetch env vars.
+   config/config.example.json   Template for ~/.social-trend-finder/config.json
+   feed-instagram.json / feed-tiktok.json   Committed feeds (Action output).
+   .github/workflows/generate-feed.yml      The server-side cron job.
+
+   REMOVED in this architecture: main.py, scheduler.py, summariser.py,
+   sender.py, renderer.py (replaced by the central feed + Claude-as-host +
+   prepare_digest.py / deliver.py).
 ==============================================================================

@@ -1,0 +1,8 @@
+{
+  "recipients": ["teammate1@company.com", "teammate2@company.com"],
+  "fromEmail": "trends@company.com",
+  "frequency": "weekly",
+  "deliveryTime": "08:00",
+  "language": "en",
+  "onboardingComplete": true
+}

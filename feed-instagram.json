@@ -1,0 +1,6 @@
+{
+  "platform": "instagram",
+  "generatedAt": null,
+  "hashtags": [],
+  "errors": ["Placeholder feed. Run generate_feed.py via the GitHub Action to populate it."]
+}
