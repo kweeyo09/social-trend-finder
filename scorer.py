@@ -1,5 +1,5 @@
 """
-src/analysis/scorer.py
+scorer.py
 Scores trends by engagement velocity, not just raw numbers.
 Surfaces what's accelerating NOW, not what's old and popular.
 """

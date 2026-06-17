@@ -13,17 +13,17 @@ import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.fetchers.instagram import fetch_all_hashtag_trends
-from src.fetchers.tiktok import fetch_all_tiktok_trends
-from src.analysis.scorer import (
+from instagram import fetch_all_hashtag_trends
+from tiktok import fetch_all_tiktok_trends
+from scorer import (
     rank_instagram_hashtags,
     rank_tiktok_sounds,
     rank_tiktok_hashtags,
 )
-from src.analysis.summariser import generate_insight
-from src.email.renderer import render_digest
-from src.email.sender import send_digest
-from config import settings
+from summariser import generate_insight
+from renderer import render_digest
+from sender import send_digest
+import settings
 
 logging.basicConfig(
     level=logging.INFO,

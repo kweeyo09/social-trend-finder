@@ -1,6 +1,7 @@
 # HTTP
 requests==2.32.3
 httpx==0.27.0
+scrapling          # web-fetch backend used by base_fetcher.safe_get
 
 # Env / Config
 python-dotenv==1.0.1

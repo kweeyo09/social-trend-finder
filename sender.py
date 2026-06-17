@@ -1,12 +1,12 @@
 """
-src/email/sender.py
+sender.py
 Sends the HTML digest email via SendGrid.
 """
 
 import logging
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, To
-from config import settings
+import settings
 
 logger = logging.getLogger(__name__)
 

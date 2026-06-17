@@ -1,5 +1,5 @@
 """
-src/email/renderer.py
+renderer.py
 Renders the trend digest as an HTML email string.
 """
 

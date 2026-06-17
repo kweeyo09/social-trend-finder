@@ -1,12 +1,12 @@
 """
-src/fetchers/instagram.py
+instagram.py
 Fetches hashtag trend data from Meta Graph API.
 """
 
 import logging
 import requests
-from config import settings
-from src.fetchers.base_fetcher import safe_get
+import settings
+from base_fetcher import safe_get
 
 logger = logging.getLogger(__name__)
 

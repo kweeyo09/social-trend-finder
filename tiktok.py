@@ -1,5 +1,5 @@
 """
-src/fetchers/tiktok.py
+tiktok.py
 Fetches trending sounds, hashtags, and keyword data from TikTok
 via EnsembleData (primary) or LamaTok (fallback).
 
@@ -9,8 +9,8 @@ provider's ToS for your use case.
 """
 
 import logging
-from config import settings
-from src.fetchers.base_fetcher import safe_get
+import settings
+from base_fetcher import safe_get
 
 logger = logging.getLogger(__name__)
 

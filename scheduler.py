@@ -10,7 +10,7 @@ import logging
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from main import run_trend_report
-from config import settings
+import settings
 
 logging.basicConfig(
     level=logging.INFO,

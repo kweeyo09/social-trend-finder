@@ -1,12 +1,12 @@
 """
-src/analysis/summariser.py
+summariser.py
 Calls Claude claude-sonnet-4-6 to generate 2-sentence trend insights.
 """
 
 import json
 import logging
 import anthropic
-from config import settings
+import settings
 
 logger = logging.getLogger(__name__)
 client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
