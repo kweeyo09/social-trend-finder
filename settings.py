@@ -2,10 +2,15 @@
 settings.py  (SERVER SIDE ONLY)
 
 Loads + validates the environment variables needed to FETCH trend data.
-This module is imported only by generate_feed.py (and the instagram/tiktok
-fetchers it uses), which runs in GitHub Actions — NOT on user machines.
+Imported only by generate_feed.py and the keyed fetchers (instagram.py,
+tiktok.py), which run in GitHub Actions — NOT on user machines.
 
 The Claude skill side (prepare_digest.py, deliver.py) never imports this.
+
+Keyed sources (TikTok + Instagram) now run through a SINGLE provider,
+ScrapeCreators (https://scrapecreators.com), so only one paid key is needed.
+YouTube (yt-dlp) and Reddit (public JSON) are keyless and read their own
+config straight from env — they do not import this module.
 """
 
 import os
@@ -25,33 +30,30 @@ def _optional(key: str, default: str = "") -> str:
     return os.getenv(key, default)
 
 
-# ── Instagram (Meta Graph API) ───────────────────────────────
-INSTAGRAM_ACCESS_TOKEN = _require("INSTAGRAM_ACCESS_TOKEN")
-INSTAGRAM_USER_ID = _require("INSTAGRAM_USER_ID")
-INSTAGRAM_API_VERSION = _optional("INSTAGRAM_API_VERSION", "v21.0")
-INSTAGRAM_BASE_URL = f"https://graph.facebook.com/{INSTAGRAM_API_VERSION}"
-
-# Optional — only needed if you wire up app-level token refresh.
-META_APP_ID = _optional("META_APP_ID")
-META_APP_SECRET = _optional("META_APP_SECRET")
-
-# ── TikTok (third-party) ─────────────────────────────────────
-ENSEMBLEDATA_API_TOKEN = _optional("ENSEMBLEDATA_API_TOKEN")
-LAMATOK_API_KEY = _optional("LAMATOK_API_KEY")
-
-if not ENSEMBLEDATA_API_TOKEN and not LAMATOK_API_KEY:
-    raise EnvironmentError(
-        "Set at least one TikTok API key: ENSEMBLEDATA_API_TOKEN or LAMATOK_API_KEY"
-    )
-
-TIKTOK_PROVIDER = "ensembledata" if ENSEMBLEDATA_API_TOKEN else "lamatok"
+# ── ScrapeCreators (covers BOTH TikTok and Instagram) ────────
+# One key, sent as the `x-api-key` header on every request.
+SCRAPECREATORS_API_KEY = _require("SCRAPECREATORS_API_KEY")
+SCRAPECREATORS_BASE = "https://api.scrapecreators.com"
 
 # ── What to track ────────────────────────────────────────────
+# Used as Instagram reel-search queries (one search per term).
 HASHTAGS_TO_TRACK = [
     h.strip().lstrip("#")
     for h in _optional("HASHTAGS_TO_TRACK", "skincare,aestheticfashion").split(",")
     if h.strip()
 ]
-TIKTOK_REGIONS = [
-    r.strip() for r in _optional("TIKTOK_REGIONS", "GB,US").split(",") if r.strip()
+
+# ── TikTok popular-hashtags options ──────────────────────────
+# Country codes for the popular-hashtags endpoint (one call per country).
+TIKTOK_COUNTRIES = [
+    c.strip() for c in _optional("TIKTOK_COUNTRIES", "GB,US").split(",") if c.strip()
 ]
+# Time window in days: 7, 30, or 120.
+TIKTOK_PERIOD = int(_optional("TIKTOK_PERIOD", "7"))
+# Optional industry filter, e.g. "beauty-and-personal-care" or
+# "apparel-and-accessories". Blank = all industries.
+TIKTOK_INDUSTRY = _optional("TIKTOK_INDUSTRY", "")
+
+# ── Instagram reel-search options ────────────────────────────
+# How far back to look: last-hour | last-day | last-week | last-month | last-year
+IG_DATE_POSTED = _optional("IG_DATE_POSTED", "last-month")

@@ -30,7 +30,13 @@ FEED_BASE = os.environ.get(
     "https://raw.githubusercontent.com/kweeyo09/social-trend-finder/main",
 )
 
-PROMPT_FILES = ["digest-intro.md", "summarize-instagram.md", "summarize-tiktok.md"]
+PROMPT_FILES = [
+    "digest-intro.md",
+    "summarize-instagram.md",
+    "summarize-tiktok.md",
+    "summarize-reddit.md",
+    "summarize-youtube.md",
+]
 
 DEFAULT_CONFIG = {
     "recipients": [],
@@ -79,6 +85,8 @@ def main():
 
     ig = fetch_json(f"{FEED_BASE}/feed-instagram.json")
     tt = fetch_json(f"{FEED_BASE}/feed-tiktok.json")
+    rd = fetch_json(f"{FEED_BASE}/feed-reddit.json")
+    yt = fetch_json(f"{FEED_BASE}/feed-youtube.json")
 
     if ig.get("_error"):
         errors.append(f"Could not fetch Instagram feed: {ig['_error']}")
@@ -86,7 +94,13 @@ def main():
     if tt.get("_error"):
         errors.append(f"Could not fetch TikTok feed: {tt['_error']}")
         tt = {}
-    for label, feed in (("Instagram", ig), ("TikTok", tt)):
+    if rd.get("_error"):
+        errors.append(f"Could not fetch Reddit feed: {rd['_error']}")
+        rd = {}
+    if yt.get("_error"):
+        errors.append(f"Could not fetch YouTube feed: {yt['_error']}")
+        yt = {}
+    for label, feed in (("Instagram", ig), ("TikTok", tt), ("Reddit", rd), ("YouTube", yt)):
         for note in (feed.get("errors") or []):
             errors.append(f"{label} feed note: {note}")
 
@@ -104,7 +118,7 @@ def main():
             "language": config.get("language", "en"),
         },
         "instagram": {
-            "hashtags": ig.get("hashtags", []),
+            "reels": ig.get("reels", []),
             "feedGeneratedAt": ig.get("generatedAt"),
         },
         "tiktok": {
@@ -112,11 +126,23 @@ def main():
             "hashtags": tt.get("hashtags", []),
             "feedGeneratedAt": tt.get("generatedAt"),
         },
+        "reddit": {
+            "posts": rd.get("posts", []),
+            "feedGeneratedAt": rd.get("generatedAt"),
+        },
+        "youtube": {
+            "shorts": yt.get("shorts", []),
+            "long": yt.get("long", []),
+            "feedGeneratedAt": yt.get("generatedAt"),
+        },
         "prompts": prompts,
         "stats": {
-            "igHashtags": len(ig.get("hashtags", [])),
+            "igReels": len(ig.get("reels", [])),
             "ttSounds": len(tt.get("sounds", [])),
             "ttHashtags": len(tt.get("hashtags", [])),
+            "rdPosts": len(rd.get("posts", [])),
+            "ytShorts": len(yt.get("shorts", [])),
+            "ytLong": len(yt.get("long", [])),
         },
         "errors": errors or None,
     }

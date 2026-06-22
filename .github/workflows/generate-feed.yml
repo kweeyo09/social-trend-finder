@@ -26,18 +26,25 @@ jobs:
 
       - name: Generate feeds
         env:
-          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
-          INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
-          ENSEMBLEDATA_API_TOKEN: ${{ secrets.ENSEMBLEDATA_API_TOKEN }}
-          LAMATOK_API_KEY: ${{ secrets.LAMATOK_API_KEY }}
+          # TikTok + Instagram both run through ScrapeCreators — one key (Secret).
+          SCRAPECREATORS_API_KEY: ${{ secrets.SCRAPECREATORS_API_KEY }}
           HASHTAGS_TO_TRACK: ${{ vars.HASHTAGS_TO_TRACK }}
-          TIKTOK_REGIONS: ${{ vars.TIKTOK_REGIONS }}
+          TIKTOK_COUNTRIES: ${{ vars.TIKTOK_COUNTRIES }}
+          TIKTOK_PERIOD: ${{ vars.TIKTOK_PERIOD }}
+          TIKTOK_INDUSTRY: ${{ vars.TIKTOK_INDUSTRY }}
+          IG_DATE_POSTED: ${{ vars.IG_DATE_POSTED }}
+          # Reddit + YouTube are keyless — just what to track (Variables).
+          REDDIT_SUBREDDITS: ${{ vars.REDDIT_SUBREDDITS }}
+          REDDIT_QUERIES: ${{ vars.REDDIT_QUERIES }}
+          REDDIT_PERIOD: ${{ vars.REDDIT_PERIOD }}
+          YOUTUBE_QUERIES: ${{ vars.YOUTUBE_QUERIES }}
+          YOUTUBE_RECENT_DAYS: ${{ vars.YOUTUBE_RECENT_DAYS }}
         run: python generate_feed.py
 
       - name: Commit feeds
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add feed-instagram.json feed-tiktok.json
+          git add feed-instagram.json feed-tiktok.json feed-reddit.json feed-youtube.json
           git diff --cached --quiet || git commit -m "chore: update trend feeds [skip ci]"
           git push

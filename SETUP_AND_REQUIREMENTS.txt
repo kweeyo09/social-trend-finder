@@ -6,16 +6,22 @@
  so the skill needs no keys to fetch. The only per-user credential is a
  SendGrid key for emailing the digest to the team.
 
+ Platforms covered: TikTok, Instagram (Reels), YouTube (Shorts + long-form),
+ and Reddit. TikTok + Instagram run through ONE paid provider (ScrapeCreators);
+ YouTube (yt-dlp) and Reddit (public JSON) are KEYLESS.
+
 
 ------------------------------------------------------------------------------
  0. THE TWO SIDES
 ------------------------------------------------------------------------------
    SERVER SIDE (runs in GitHub Actions, owned by an admin)
-     generate_feed.py + instagram.py + tiktok.py + scorer.py +
-     base_fetcher.py + settings.py
-     -> fetches Instagram + TikTok, scores by engagement velocity, and
-        commits feed-instagram.json / feed-tiktok.json to the repo.
-     -> needs the Meta + TikTok keys, stored as GitHub Secrets.
+     generate_feed.py + instagram.py + tiktok.py + reddit.py + youtube.py +
+     scorer.py + base_fetcher.py + settings.py
+     -> fetches all four platforms, scores by engagement velocity, and commits
+        feed-instagram.json / feed-tiktok.json / feed-reddit.json /
+        feed-youtube.json to the repo.
+     -> needs ONE key: SCRAPECREATORS_API_KEY (TikTok + Instagram), stored as a
+        GitHub Secret. YouTube + Reddit need no key.
 
    SKILL SIDE (runs inside Claude, on each user's machine)
      prepare_digest.py  -> reads the committed feeds + prompts + config (HTTP)
@@ -24,8 +30,8 @@
      -> uses ONLY the Python standard library (no pip install)
      -> needs ONLY a SendGrid key (for the person sending), stored locally.
 
-   API KEY COUNT:  4 (old design)  ->  1 per user (SendGrid)  +  fetch keys
-                   held once, centrally, by the admin.
+   API KEY COUNT:  1 central (ScrapeCreators, admin)  +  1 per sender (SendGrid).
+                   YouTube and Reddit are free/keyless.
 
 
 ------------------------------------------------------------------------------
@@ -50,7 +56,7 @@
      language     "en" | "zh" | "bilingual"
 
    Run a digest (what Claude does for you):
-     python3 prepare_digest.py            # prints feed+prompts+config as JSON
+     python3 prepare_digest.py            # prints feeds+prompts+config as JSON
      ...Claude writes the HTML digest from that JSON...
      python3 deliver.py --subject "..." --file /tmp/stf-digest.html
 
@@ -60,27 +66,33 @@
 ------------------------------------------------------------------------------
    Python dependencies (requirements.txt) — installed automatically by the
    GitHub Action; only needed if you run the fetcher locally:
-     requests==2.32.3      Instagram token refresh
      scrapling             web-fetch backend for base_fetcher.safe_get
      tenacity==8.3.0       retry/backoff on rate limits
      python-dotenv==1.0.1  load .env for local fetch testing
+     yt-dlp                keyless YouTube search + metadata
 
    GitHub repository SECRETS (Settings -> Secrets and variables -> Actions):
-     INSTAGRAM_ACCESS_TOKEN   long-lived IG token (60-day expiry)
-     INSTAGRAM_USER_ID        IG Business/Creator user ID
-     ENSEMBLEDATA_API_TOKEN   EnsembleData (covers IG + TikTok)   } at least
-        -- or --                                                  } one of
-     LAMATOK_API_KEY          LamaTok (TikTok-only, cheaper)      } these
+     SCRAPECREATORS_API_KEY   one key, covers TikTok + Instagram
+                              (scrapecreators.com — 100 free credits, then
+                              pay-as-you-go; sent as the x-api-key header)
 
-   GitHub repository VARIABLES:
-     HASHTAGS_TO_TRACK        e.g. skincare,aestheticfashion,cleanbeauty
-     TIKTOK_REGIONS           e.g. GB,US
+   GitHub repository VARIABLES (all optional — sensible defaults exist):
+     HASHTAGS_TO_TRACK   Instagram reel-search terms, e.g. skincare,cleanbeauty
+     TIKTOK_COUNTRIES    popular-hashtags country codes, e.g. GB,US
+     TIKTOK_PERIOD       7, 30, or 120 (days)
+     TIKTOK_INDUSTRY     e.g. beauty-and-personal-care (blank = all)
+     IG_DATE_POSTED      last-hour|last-day|last-week|last-month|last-year
+     REDDIT_SUBREDDITS   e.g. SkincareAddiction,beauty,femalefashionadvice
+     REDDIT_QUERIES      optional site-wide keyword searches
+     REDDIT_PERIOD       hour|day|week|month|year|all
+     YOUTUBE_QUERIES     e.g. skincare routine,outfit ideas
+     YOUTUBE_RECENT_DAYS only keep videos newer than this (default 30)
 
    First run:
      Actions tab -> "Generate Trend Feeds" -> Run workflow.
-     This creates feed-instagram.json / feed-tiktok.json. After that the
-     workflow runs on the schedule in .github/workflows/generate-feed.yml
-     (default: weekly, Monday 06:00 UTC).
+     This creates the four feed-*.json files. After that the workflow runs on
+     the schedule in .github/workflows/generate-feed.yml (default: weekly,
+     Monday 06:00 UTC).
 
    If you fork to a different repo, set STF_FEED_BASE (raw URL base) so the
    skill's prepare_digest.py reads YOUR feeds. Default points at
@@ -90,12 +102,12 @@
 ------------------------------------------------------------------------------
  3. WHERE TO GET THE KEYS (admin side) + GOTCHAS
 ------------------------------------------------------------------------------
-   META (Instagram Graph API)   developers.facebook.com -> create app
-     - Business/Creator accounts only; 30 hashtag searches/week per account;
-       long-lived token expires after 60 days.
-   TIKTOK (third-party)
-     - EnsembleData ($) covers IG + TikTok; LamaTok ($, cheaper, 100 free).
-       The official TikTok API does not expose trending data.
+   SCRAPECREATORS (TikTok + Instagram)   scrapecreators.com -> sign up -> API key
+     - One key covers both platforms. Each request costs ~1 credit; 100 free to
+       start. Popular-hashtags is fully documented; trending SOUNDS are derived
+       best-effort from the popular-videos feed and may be empty on some runs.
+   YOUTUBE  — keyless. yt-dlp searches + reads public metadata. No account.
+   REDDIT   — keyless. Public .json endpoints with a browser User-Agent.
    SENDGRID (skill side)         app.sendgrid.com -> API Keys
      - fromEmail must be a verified sender/domain.
 
@@ -111,13 +123,17 @@
        sending, so you can test formatting safely:
          echo "<h1>hi</h1>" | python3 deliver.py --subject "test"
      - Pure-logic modules (server side) can be unit-tested with fake dicts:
-         scorer.rank_tiktok_sounds([...]) / scorer.score_instagram_post({...})
+         scorer.rank_reddit_posts([...]) / scorer.rank_instagram_reels([...])
 
-   Server side (needs keys):
+   Server side (needs the ScrapeCreators key for IG/TikTok only):
      pip install -r requirements.txt
-     export INSTAGRAM_ACCESS_TOKEN=... INSTAGRAM_USER_ID=... LAMATOK_API_KEY=...
-     export HASHTAGS_TO_TRACK=skincare,cleanbeauty TIKTOK_REGIONS=GB,US
-     python generate_feed.py        # writes the two feed-*.json files
+     export SCRAPECREATORS_API_KEY=...
+     export HASHTAGS_TO_TRACK=skincare,cleanbeauty TIKTOK_COUNTRIES=GB,US
+     python generate_feed.py                 # all four feeds
+     python generate_feed.py --reddit-only   # keyless: no ScrapeCreators key needed*
+     python generate_feed.py --youtube-only  # keyless: no ScrapeCreators key needed*
+     (* reddit.py / youtube.py read their own env and don't import settings,
+        so the keyless feeds build even without the ScrapeCreators key.)
 
 
 ------------------------------------------------------------------------------
@@ -125,17 +141,20 @@
 ------------------------------------------------------------------------------
    SKILL.md            The skill Claude runs (onboarding + digest workflow).
    README.md           Human quick-start (user + admin).
-   prepare_digest.py   Skill side: feed + prompts + config -> JSON (stdlib).
+   prepare_digest.py   Skill side: feeds + prompts + config -> JSON (stdlib).
    deliver.py          Skill side: email via SendGrid HTTP API (stdlib).
-   prompts/*.md        Editable summary instructions.
+   prompts/*.md        Editable summary instructions (one per platform).
    generate_feed.py    Server side: fetch + score -> feed JSON.
-   instagram.py        Server side: Meta Graph API fetchers.
-   tiktok.py           Server side: EnsembleData / LamaTok fetchers.
-   scorer.py           Server side: engagement-velocity scoring (pure).
+   instagram.py        Server side: ScrapeCreators Instagram Reels fetcher.
+   tiktok.py           Server side: ScrapeCreators TikTok hashtags + sounds.
+   reddit.py           Server side: keyless Reddit public-JSON fetcher.
+   youtube.py          Server side: keyless yt-dlp search (Shorts + long-form).
+   scorer.py           Server side: engagement-velocity scoring + caps/normalise.
    base_fetcher.py     Server side: Scrapling fetch + tenacity retry.
-   settings.py         Server side: validates fetch env vars.
+   settings.py         Server side: validates the ScrapeCreators key + options.
    config/config.example.json   Template for ~/.social-trend-finder/config.json
-   feed-instagram.json / feed-tiktok.json   Committed feeds (Action output).
+   feed-*.json         Committed feeds (Action output): instagram, tiktok,
+                       reddit, youtube.
    .github/workflows/generate-feed.yml      The server-side cron job.
 
    REMOVED in this architecture: main.py, scheduler.py, summariser.py,

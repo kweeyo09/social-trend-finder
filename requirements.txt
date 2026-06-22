@@ -2,7 +2,7 @@
 # the GitHub Action only. The Claude skill side (prepare_digest.py, deliver.py)
 # uses ONLY the Python standard library — nothing to install to run a digest.
 
-requests==2.32.3        # Instagram token refresh helper
-scrapling               # web-fetch backend for base_fetcher.safe_get
+scrapling               # web-fetch backend for base_fetcher.safe_get (ScrapeCreators + Reddit)
 tenacity==8.3.0         # retry/backoff on rate limits
 python-dotenv==1.0.1    # load .env when testing the fetcher locally
+yt-dlp                  # keyless YouTube search + metadata (youtube.py)

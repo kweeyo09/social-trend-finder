@@ -1,6 +1,7 @@
 {
-  "platform": "instagram",
+  "platform": "youtube",
   "generatedAt": null,
-  "reels": [],
+  "shorts": [],
+  "long": [],
   "errors": ["Placeholder feed. Run generate_feed.py via the GitHub Action to populate it."]
 }

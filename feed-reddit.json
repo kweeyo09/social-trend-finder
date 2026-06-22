@@ -1,6 +1,6 @@
 {
-  "platform": "instagram",
+  "platform": "reddit",
   "generatedAt": null,
-  "reels": [],
+  "posts": [],
   "errors": ["Placeholder feed. Run generate_feed.py via the GitHub Action to populate it."]
 }

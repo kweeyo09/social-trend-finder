@@ -1,11 +1,18 @@
 """
-tiktok.py
-Fetches trending sounds, hashtags, and keyword data from TikTok
-via EnsembleData (primary) or LamaTok (fallback).
+tiktok.py  (SERVER SIDE — runs in GitHub Actions)
 
-NOTE: The official TikTok API does NOT expose trending sounds or
-discovery data. This module uses third-party APIs. Verify your
-provider's ToS for your use case.
+Fetches TikTok trends via the ScrapeCreators API
+(https://scrapecreators.com). Replaces the old EnsembleData / LamaTok
+integration — one ScrapeCreators key now covers both TikTok and Instagram.
+
+Two signals:
+  - Popular hashtags  — /v1/tiktok/hashtags/popular  (fully documented)
+  - Trending sounds   — best-effort from /v1/tiktok/videos/popular
+
+NOTE on sounds: ScrapeCreators' popular-videos response schema is not published
+in the public docs index, so the music object is read DEFENSIVELY (several
+candidate field names, never crashes). If the shape differs, sounds simply come
+back empty and the hashtags signal still works.
 """
 
 import logging
@@ -14,116 +21,94 @@ from base_fetcher import safe_get
 
 logger = logging.getLogger(__name__)
 
-PROVIDER = settings.TIKTOK_PROVIDER
-
-# ── EnsembleData endpoints ───────────────────────────────────
-ENSEMBLE_BASE = "https://ensembledata.com/apis/tt"
-ENSEMBLE_TOKEN = settings.ENSEMBLEDATA_API_TOKEN
-
-# ── LamaTok endpoints ────────────────────────────────────────
-LAMATOK_BASE = "https://api.lamatok.com"
-LAMATOK_KEY = settings.LAMATOK_API_KEY
+BASE = settings.SCRAPECREATORS_BASE
+HEADERS = {"x-api-key": settings.SCRAPECREATORS_API_KEY}
 
 
-# ── EnsembleData fetchers ────────────────────────────────────
+# ── Popular hashtags (documented endpoint) ───────────────────
 
-def _ensemble_trending_sounds(region: str) -> list[dict]:
-    data = safe_get(
-        f"{ENSEMBLE_BASE}/music/trending",
-        params={"token": ENSEMBLE_TOKEN, "region": region},
+def _popular_hashtags_for_country(country: str) -> list[dict]:
+    params = {"period": settings.TIKTOK_PERIOD, "countryCode": country}
+    if settings.TIKTOK_INDUSTRY:
+        params["industry"] = settings.TIKTOK_INDUSTRY
+
+    data = safe_get(f"{BASE}/v1/tiktok/hashtags/popular", params=params, headers=HEADERS)
+    out = []
+    for h in data.get("list", []):
+        out.append({
+            "platform": "tiktok",
+            "hashtag": h.get("hashtag_name", ""),
+            "view_count": h.get("video_views", 0),
+            "video_count": h.get("publish_cnt", 0),
+            "rank": h.get("rank", 0),
+            "rank_diff": h.get("rank_diff", 0),
+            "country": country,
+        })
+    return out
+
+
+def fetch_trending_hashtags() -> list[dict]:
+    """Popular hashtags across all configured countries."""
+    results = []
+    for country in settings.TIKTOK_COUNTRIES:
+        logger.info(f"Fetching TikTok popular hashtags for {country}")
+        try:
+            results.extend(_popular_hashtags_for_country(country))
+        except Exception as e:
+            logger.error(f"Failed TikTok popular hashtags for {country}: {e}")
+    return results
+
+
+# ── Trending sounds (best-effort) ────────────────────────────
+
+def _extract_music(video: dict) -> dict | None:
+    """Pull a sound object out of a popular-video record, tolerating field drift."""
+    music = (
+        video.get("music")
+        or video.get("music_info")
+        or video.get("added_sound_music_info")
+        or {}
     )
-    return data.get("data", {}).get("music_list", [])
+    if not isinstance(music, dict) or not music:
+        return None
+    title = music.get("title") or music.get("music_title") or music.get("song_name")
+    if not title:
+        return None
+    return {
+        "id": music.get("id") or music.get("music_id") or title,
+        "title": title,
+        "author": music.get("author") or music.get("author_name") or music.get("artist", ""),
+        "video_count": music.get("user_count") or music.get("video_count", 0),
+    }
 
 
-def _ensemble_hashtag_search(hashtag: str) -> dict:
-    data = safe_get(
-        f"{ENSEMBLE_BASE}/hashtag/search",
-        params={"token": ENSEMBLE_TOKEN, "name": hashtag},
-    )
-    return data.get("data", {})
+def fetch_trending_sounds() -> list[dict]:
+    """Best-effort: derive trending sounds from the popular-videos feed."""
+    sounds = []
+    for country in settings.TIKTOK_COUNTRIES:
+        logger.info(f"Fetching TikTok popular videos (for sounds) — {country}")
+        params = {"period": settings.TIKTOK_PERIOD, "countryCode": country}
+        if settings.TIKTOK_INDUSTRY:
+            params["industry"] = settings.TIKTOK_INDUSTRY
+        try:
+            data = safe_get(f"{BASE}/v1/tiktok/videos/popular", params=params, headers=HEADERS)
+        except Exception as e:
+            logger.error(f"Failed TikTok popular videos for {country}: {e}")
+            continue
 
-
-def _ensemble_keyword_search(keyword: str, days: int = 7) -> list[dict]:
-    data = safe_get(
-        f"{ENSEMBLE_BASE}/keyword/search",
-        params={"token": ENSEMBLE_TOKEN, "keyword": keyword, "period": days},
-    )
-    return data.get("data", {}).get("videos", [])
-
-
-# ── LamaTok fetchers ─────────────────────────────────────────
-
-def _lamatok_trending_sounds(region: str) -> list[dict]:
-    data = safe_get(
-        f"{LAMATOK_BASE}/v1/trending/sounds",
-        headers={"Authorization": f"Bearer {LAMATOK_KEY}"},
-        params={"region": region},
-    )
-    return data.get("data", [])
-
-
-def _lamatok_hashtag_search(hashtag: str) -> dict:
-    data = safe_get(
-        f"{LAMATOK_BASE}/v1/hashtag/info",
-        headers={"Authorization": f"Bearer {LAMATOK_KEY}"},
-        params={"name": hashtag},
-    )
-    return data.get("data", {})
+        videos = data.get("list") or data.get("videos") or data.get("data") or []
+        for v in videos:
+            music = _extract_music(v if isinstance(v, dict) else {})
+            if music:
+                music["region"] = country
+                sounds.append(music)
+    return sounds
 
 
 # ── Public interface ─────────────────────────────────────────
 
-def fetch_trending_sounds() -> list[dict]:
-    """Fetch trending sounds across all configured regions."""
-    sounds = []
-    for region in settings.TIKTOK_REGIONS:
-        logger.info(f"Fetching TikTok trending sounds for region: {region}")
-        try:
-            if PROVIDER == "ensembledata":
-                region_sounds = _ensemble_trending_sounds(region)
-            else:
-                region_sounds = _lamatok_trending_sounds(region)
-
-            for s in region_sounds:
-                s["region"] = region
-            sounds.extend(region_sounds)
-        except Exception as e:
-            logger.error(f"Failed to fetch sounds for {region}: {e}")
-
-    return sounds
-
-
-def fetch_trending_hashtags() -> list[dict]:
-    """Fetch hashtag performance for tracked tags."""
-    results = []
-    for tag in settings.HASHTAGS_TO_TRACK:
-        logger.info(f"Fetching TikTok hashtag data for #{tag}")
-        try:
-            if PROVIDER == "ensembledata":
-                data = _ensemble_hashtag_search(tag)
-            else:
-                data = _lamatok_hashtag_search(tag)
-
-            results.append(
-                {
-                    "platform": "tiktok",
-                    "hashtag": tag,
-                    "view_count": data.get("view_count", 0),
-                    "video_count": data.get("video_count", 0),
-                    "raw": data,
-                }
-            )
-        except Exception as e:
-            logger.error(f"Failed to fetch TikTok hashtag #{tag}: {e}")
-
-    return results
-
-
 def fetch_all_tiktok_trends() -> dict:
-    """
-    Main entry point: fetch sounds + hashtags.
-    Returns dict with 'sounds' and 'hashtags' keys.
-    """
+    """Main entry point: hashtags (primary) + sounds (best-effort)."""
     return {
         "sounds": fetch_trending_sounds(),
         "hashtags": fetch_trending_hashtags(),

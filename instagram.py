@@ -1,114 +1,62 @@
 """
-instagram.py
-Fetches hashtag trend data from Meta Graph API.
+instagram.py  (SERVER SIDE — runs in GitHub Actions)
+
+Fetches trending Instagram Reels via the ScrapeCreators API
+(https://docs.scrapecreators.com/v2/instagram/reels/search). One search per
+tracked term in HASHTAGS_TO_TRACK; results are normalised so the scorer can
+rank them by engagement velocity.
+
+This replaces the old Meta Graph integration — no Instagram access token,
+user id, app secret, or 60-day token refresh needed anymore.
 """
 
 import logging
-import requests
 import settings
 from base_fetcher import safe_get
 
 logger = logging.getLogger(__name__)
 
-BASE = settings.INSTAGRAM_BASE_URL
-TOKEN = settings.INSTAGRAM_ACCESS_TOKEN
-USER_ID = settings.INSTAGRAM_USER_ID
+BASE = settings.SCRAPECREATORS_BASE
+HEADERS = {"x-api-key": settings.SCRAPECREATORS_API_KEY}
 
 
-def get_hashtag_id(hashtag: str) -> str | None:
-    """Resolve a hashtag string to its IG node ID."""
+def _normalise(reel: dict, query: str) -> dict:
+    owner = reel.get("owner") or {}
+    return {
+        "platform": "instagram",
+        "query": query,
+        "shortcode": reel.get("shortcode") or reel.get("code", ""),
+        "caption": (reel.get("caption") or "")[:280],
+        "owner": owner.get("username", ""),
+        "owner_verified": owner.get("is_verified", False),
+        # Map to the field names the scorer expects.
+        "like_count": reel.get("like_count", 0),
+        "comments_count": reel.get("comment_count", 0),
+        "play_count": reel.get("video_play_count") or reel.get("video_view_count", 0),
+        "duration": reel.get("video_duration", 0),
+        "timestamp": reel.get("taken_at", ""),
+        "url": reel.get("url", ""),
+    }
+
+
+def search_reels(query: str) -> list[dict]:
+    """Search Reels for one keyword/hashtag within the configured window."""
     data = safe_get(
-        f"{BASE}/ig_hashtag_search",
-        params={"user_id": USER_ID, "q": hashtag, "access_token": TOKEN},
+        f"{BASE}/v2/instagram/reels/search",
+        params={"query": query, "date_posted": settings.IG_DATE_POSTED},
+        headers=HEADERS,
     )
-    try:
-        return data["data"][0]["id"]
-    except (KeyError, IndexError):
-        logger.warning(f"Hashtag not found: #{hashtag}")
-        return None
+    reels = data.get("reels", []) or data.get("items", []) or data.get("data", [])
+    return [_normalise(r, query) for r in reels]
 
 
-def get_top_media(hashtag_id: str) -> list[dict]:
-    """Get top posts for a hashtag node ID."""
-    data = safe_get(
-        f"{BASE}/{hashtag_id}/top_media",
-        params={
-            "fields": "id,media_type,like_count,comments_count,timestamp",
-            "access_token": TOKEN,
-        },
-    )
-    return data.get("data", [])
-
-
-def get_recent_media(hashtag_id: str) -> list[dict]:
-    """Get recent posts for a hashtag node ID."""
-    data = safe_get(
-        f"{BASE}/{hashtag_id}/recent_media",
-        params={
-            "fields": "id,media_type,like_count,comments_count,timestamp",
-            "access_token": TOKEN,
-        },
-    )
-    return data.get("data", [])
-
-
-def get_account_reels() -> list[dict]:
-    """
-    Fetch recent Reels from the connected business account.
-    Useful as a proxy for trending formats (own account only).
-    Requires 1,000+ followers for insights.
-    """
-    data = safe_get(
-        f"{BASE}/{USER_ID}/media",
-        params={
-            "fields": "id,media_type,like_count,comments_count,timestamp",
-            "access_token": TOKEN,
-        },
-    )
-    reels = [p for p in data.get("data", []) if p.get("media_type") == "REELS"]
-    return reels
-
-
-def refresh_token(current_token: str) -> str:
-    """
-    Refresh an Instagram long-lived token before 60-day expiry.
-    Call this weekly via scheduler.
-    """
-    resp = requests.get(
-        "https://graph.facebook.com/oauth/access_token",
-        params={"grant_type": "ig_refresh_token", "access_token": current_token},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    new_token = resp.json().get("access_token")
-    logger.info("Instagram token refreshed successfully.")
-    return new_token
-
-
-def fetch_all_hashtag_trends() -> list[dict]:
-    """
-    Main entry point: fetch top + recent media for all tracked hashtags.
-    Returns a list of hashtag trend dicts.
-    """
-    results = []
+def fetch_all_reels() -> list[dict]:
+    """Main entry point: search Reels for every tracked term, return them all."""
+    out: list[dict] = []
     for tag in settings.HASHTAGS_TO_TRACK:
-        logger.info(f"Fetching Instagram trends for #{tag}")
-        hashtag_id = get_hashtag_id(tag)
-        if not hashtag_id:
-            continue
-
-        top = get_top_media(hashtag_id)
-        recent = get_recent_media(hashtag_id)
-
-        results.append(
-            {
-                "platform": "instagram",
-                "hashtag": tag,
-                "top_posts": top,
-                "recent_posts": recent,
-                "top_likes": max((p.get("like_count", 0) for p in top), default=0),
-                "recent_count": len(recent),
-            }
-        )
-
-    return results
+        logger.info(f"Searching Instagram Reels for: {tag}")
+        try:
+            out.extend(search_reels(tag))
+        except Exception as e:
+            logger.error(f"Failed Instagram reel search '{tag}': {e}")
+    return out
